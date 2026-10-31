@@ -181,75 +181,11 @@ export default function StudentHome() {
     )
     .slice(0, 4)
 
-  async function logout() {
-    const { error } = await supabase.auth.signOut()
-
-    if (error) {
-      setError('Could not log out. Please try again.')
-    }
-  }
-
   return (
-    <div className="min-h-screen bg-[#F5F7FF] text-slate-800 md:flex">
+    <div className="w-full min-w-0 text-slate-800">
 
-      {/* Desktop sidebar */}
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-indigo-100 bg-white p-5 md:flex">
-        <Link to="/student" className="mb-9 flex items-center gap-3">
-          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-gradient-to-br from-sky-400 to-indigo-500 text-2xl shadow-md shadow-sky-100">
-            📚
-          </div>
-          <div>
-            <p className="text-lg font-extrabold tracking-tight text-indigo-950">
-              Vijaya
-            </p>
-            <p className="text-xs font-medium text-slate-400">
-              TUITION & LEARNING
-            </p>
-          </div>
-        </Link>
-
-        <p className="mb-3 px-3 text-xs font-bold uppercase tracking-widest text-slate-400">
-          YOUR SPACE
-        </p>
-
-        <nav className="space-y-2">
-          {navigation.map((item, index) => (
-            <Link
-              key={item.to}
-              to={item.to}
-              className={`flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-semibold transition hover:bg-indigo-50 hover:text-indigo-700 ${
-                index === 0
-                  ? 'bg-indigo-50 text-indigo-700'
-                  : 'text-slate-600'
-              }`}
-            >
-              <span className="text-lg">{item.icon}</span>
-              {item.label}
-              {index === 0 && (
-                <span className="ml-auto h-2 w-2 rounded-full bg-indigo-500" />
-              )}
-            </Link>
-          ))}
-        </nav>
-
-        <div className="mt-auto rounded-2xl bg-gradient-to-br from-sky-100 via-indigo-50 to-purple-100 p-4">
-          <div className="mb-2 text-2xl">🌈</div>
-          <p className="font-bold text-indigo-950">Keep learning!</p>
-          <p className="mt-1 text-xs leading-5 text-slate-600">
-            Every small step takes you closer to your goals.
-          </p>
-        </div>
-
-        <button
-          onClick={logout}
-          className="mt-5 rounded-xl px-4 py-3 text-left text-sm font-semibold text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"
-        >
-          ↪ Log out
-        </button>
-      </aside>
-
-      {/* Main content */}
-      <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-10">
+      {/* Dashboard content sits inside the shared responsive application shell. */}
+      <div className="min-w-0 w-full">
         <div className="mx-auto max-w-6xl space-y-7">
 
           {/* Header */}
@@ -672,7 +608,7 @@ export default function StudentHome() {
             </>
           )}
         </div>
-      </main>
+      </div>
     </div>
   )
 }

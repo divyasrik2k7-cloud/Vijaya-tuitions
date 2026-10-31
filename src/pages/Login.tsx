@@ -75,17 +75,23 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen grid place-items-center bg-sky-50 p-4">
-      <form
-        onSubmit={submit}
-        className="bg-white p-8 rounded-2xl shadow w-full max-w-sm space-y-4 text-navy"
-      >
-        <h1 className="text-2xl font-bold">Vijaya Tuitions</h1>
-
-        <p className="text-sm text-gray-500">
-          Students can sign in using their Student ID.
-          Teachers can continue using their email.
-        </p>
+    <main className="login-screen">
+      <section className="login-aside" aria-label="Vijaya Tuitions introduction">
+        <div className="login-brand"><span className="login-brand-mark">V</span><span>VIJAYA <b>TUITIONS</b></span></div>
+        <div className="login-aside-copy">
+          <span className="login-kicker">A BETTER WAY TO LEARN</span>
+          <h2>Small steps.<br />Big possibilities.</h2>
+          <p>A calm, organised space for students to learn and teachers to guide every step forward.</p>
+          <div className="login-feature-list"><span>✓ One place for lessons and materials</span><span>✓ Clear homework and test updates</span><span>✓ Progress you can feel good about</span></div>
+        </div>
+        <div className="login-aside-footer">Learn with purpose. Grow with confidence.</div>
+      </section>
+      <section className="login-main">
+        <form onSubmit={submit} className="login-card">
+          <div className="login-card-icon">✦</div>
+          <p className="login-kicker login-kicker-dark">WELCOME BACK</p>
+          <h1>Sign in to continue</h1>
+          <p className="login-description">Access your learning space or teacher workspace.</p>
 
         <div>
           <label htmlFor="studentCode" className="block text-sm font-medium mb-1">
@@ -94,7 +100,7 @@ export default function Login() {
 
           <input
             id="studentCode"
-            className="border rounded p-2 w-full"
+            className="login-input"
             type="text"
             placeholder="e.g. VT001"
             value={studentCode}
@@ -112,7 +118,7 @@ export default function Login() {
           <div className="relative">
             <input
               id="password"
-              className="border rounded p-2 pr-16 w-full"
+              className="login-input login-password-input"
               type={showPassword ? 'text' : 'password'}
               placeholder="Password"
               value={password}
@@ -124,7 +130,7 @@ export default function Login() {
             <button
               type="button"
               onClick={() => setShowPassword(v => !v)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-violet-600"
+              className="login-show-password"
             >
               {showPassword ? 'Hide' : 'Show'}
             </button>
@@ -140,15 +146,15 @@ export default function Login() {
         <button
           type="submit"
           disabled={loading}
-          className="bg-navy text-white rounded p-2 w-full disabled:opacity-60"
+          className="login-submit"
         >
           {loading ? 'Signing in…' : 'Sign in'}
         </button>
 
-        <p className="text-xs text-gray-500">
-          Forgot your password? Please contact your teacher.
-        </p>
-      </form>
-    </div>
+        <p className="login-help">Forgot your password? Please contact your teacher.</p>
+        <p className="login-footnote">Your learning journey, all in one place.</p>
+        </form>
+      </section>
+    </main>
   )
 }

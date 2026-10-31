@@ -9,6 +9,7 @@ import {
   Link,
   NavLink,
   useNavigate,
+  useLocation,
 } from 'react-router-dom'
 
 import { AuthProvider, useAuth } from './auth/AuthContext'
@@ -32,6 +33,9 @@ import StudentTests from './pages/StudentTests'
 import Students from './pages/Students'
 import Attendance from './pages/Attendance'
 import StudentHome from './pages/StudentHome'
+import StudentResults from './pages/StudentResults'
+import StudentAnnouncements from './pages/StudentAnnouncements'
+import DailyPlanner from './pages/DailyPlanner'
 
 import { supabase } from './lib/supabase'
 
@@ -44,6 +48,7 @@ type NavItem = {
 
 const teacherItems: NavItem[] = [
   { to: '/teacher', label: 'Overview', icon: '🏠', end: true },
+  { to: '/teacher/planner', label: 'Daily Planner', icon: '🗓️' },
   { to: '/teacher/students', label: 'Students', icon: '🧑‍🎓' },
   { to: '/teacher/classes', label: 'Classes & Subjects', icon: '📚' },
   { to: '/teacher/attendance', label: 'Attendance', icon: '📅', end: true },
@@ -61,6 +66,8 @@ const studentItems: NavItem[] = [
   { to: '/student/materials', label: 'Study Materials', icon: '📚' },
   { to: '/student/homework', label: 'Homework', icon: '✏️' },
   { to: '/student/tests', label: 'Online Tests', icon: '📝' },
+  { to: '/student/results', label: 'Results & Feedback', icon: '🏆' },
+  { to: '/student/announcements', label: 'Announcements', icon: '📣' },
 ]
 
 function Home() {
@@ -298,6 +305,7 @@ function AppShell({
 }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [email, setEmail] = useState('')
+  const location = useLocation()
   const items = role === 'teacher' ? teacherItems : studentItems
   const isTeacher = role === 'teacher'
 
@@ -315,7 +323,24 @@ function AppShell({
 
   useEffect(() => {
     setMobileOpen(false)
-  }, [role])
+  }, [role, location.pathname])
+
+  useEffect(() => {
+    if (!mobileOpen) return
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setMobileOpen(false)
+    }
+
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [mobileOpen])
 
   return (
     <div className="app-shell">
@@ -328,7 +353,11 @@ function AppShell({
         />
       )}
 
-      <aside className={`sidebar print:hidden ${mobileOpen ? 'sidebar-open' : ''}`}>
+      <aside
+        id="primary-navigation"
+        className={`sidebar print:hidden ${mobileOpen ? 'sidebar-open' : ''}`}
+        aria-label={isTeacher ? 'Teacher navigation' : 'Student navigation'}
+      >
         <Brand />
 
         <div className="sidebar-label">
@@ -386,11 +415,12 @@ function AppShell({
             <button
               type="button"
               className="mobile-menu-button"
-              aria-label="Open navigation"
+              aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'}
+              aria-controls="primary-navigation"
               aria-expanded={mobileOpen}
               onClick={() => setMobileOpen(value => !value)}
             >
-              ☰
+              {mobileOpen ? '×' : '☰'}
             </button>
 
             <div className="min-w-0">
@@ -405,8 +435,6 @@ function AppShell({
           </div>
 
           <div className="topbar-right">
-            <span className="status-dot" />
-            <span>Connected</span>
             <ProfileMenu role={role} email={email} />
           </div>
         </header>
@@ -448,6 +476,7 @@ function App() {
           <Route path="/login" element={<Login />} />
 
           <Route path="/teacher" element={<TeacherPage><Dashboard /></TeacherPage>} />
+          <Route path="/teacher/planner" element={<TeacherPage><DailyPlanner /></TeacherPage>} />
           <Route path="/teacher/classes" element={<TeacherPage><ClassesSubjects /></TeacherPage>} />
           <Route path="/teacher/students" element={<TeacherPage><Students /></TeacherPage>} />
           <Route path="/teacher/students/:id" element={<TeacherPage><StudentProfile /></TeacherPage>} />
@@ -465,6 +494,8 @@ function App() {
           <Route path="/student/materials" element={<StudentPage><StudentMaterials /></StudentPage>} />
           <Route path="/student/homework" element={<StudentPage><StudentHomework /></StudentPage>} />
           <Route path="/student/tests" element={<StudentPage><StudentTests /></StudentPage>} />
+          <Route path="/student/results" element={<StudentPage><StudentResults /></StudentPage>} />
+          <Route path="/student/announcements" element={<StudentPage><StudentAnnouncements /></StudentPage>} />
 
           <Route
             path="*"
