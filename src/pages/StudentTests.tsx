@@ -1,15 +1,66 @@
+
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
+type QuestionType = 'mcq' | 'true_false' | 'fill_blank' | 'short_answer'
+
+type TestOption = {
+  id: string
+  body: string
+  position: number
+}
+
+type TestQuestion = {
+  id: string
+  body: string
+  marks: number
+  position: number
+  question_type?: QuestionType
+  test_options?: TestOption[]
+}
+
+type Test = {
+  id: string
+  title: string
+  duration_minutes: number
+  available_from: string
+  available_until: string
+  subjects?: { name: string } | null
+}
+
+type Attempt = {
+  test_id: string
+  submitted_at: string | null
+  test_results?: {
+    score: number
+    max_score: number
+    grading_complete?: boolean
+  }[] | {
+    score: number
+    max_score: number
+    grading_complete?: boolean
+  } | null
+}
+
 export default function StudentTests() {
-  const [tests, setTests] = useState<any[]>([])
-  const [atts, setAtts] = useState<Record<string, any>>({})
-  const [act, setAct] = useState<any>(null)
+  const [tests, setTests] = useState<Test[]>([])
+  const [atts, setAtts] = useState<Record<string, Attempt>>({})
+  const [act, setAct] = useState<{
+    attempt: string
+    test: Test
+    ends: number
+    qs: TestQuestion[]
+  } | null>(null)
+
+  // MCQ/True-False answers store option IDs.
+  // Fill-in/short-answer questions store text.
   const [idx, setIdx] = useState(0)
   const [ans, setAns] = useState<Record<string, string>>({})
   const [left, setLeft] = useState(0)
+
   const [msg, setMsg] = useState('')
   const [loading, setLoading] = useState(true)
+  const [starting, setStarting] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [filter, setFilter] = useState('all')
   const [search, setSearch] = useState('')
@@ -24,89 +75,120 @@ export default function StudentTests() {
           'id,title,duration_minutes,available_from,available_until,subjects(name)',
         )
         .order('available_from', { ascending: false }),
+
       supabase
         .from('test_attempts')
-        .select('test_id,submitted_at,test_results(score,max_score)'),
+        .select('test_id,submitted_at,test_results(score,max_score,grading_complete)'),
     ])
-
-    setTests(t.data ?? [])
-    setAtts(Object.fromEntries((a.data ?? []).map(x => [x.test_id, x])))
-    setLoading(false)
 
     if (t.error || a.error) {
       setMsg('Some test information could not be loaded. Please refresh.')
     }
+
+    setTests((t.data ?? []) as unknown as Test[])
+
+    setAtts(
+      Object.fromEntries(
+        (a.data ?? []).map(x => [x.test_id, x as unknown as Attempt]),
+      ),
+    )
+
+    setLoading(false)
   }
 
   useEffect(() => {
     void load()
   }, [])
 
-  async function start(t: any) {
+  async function start(test: Test) {
+    if (starting) return
+
     setMsg('')
+    setStarting(true)
 
-    const r = await supabase.rpc('start_test', { p_test: t.id })
+    try {
+      const r = await supabase.rpc('start_test', {
+        p_test: test.id,
+      })
 
-    if (r.error) {
-      setMsg(
-        r.error.message.includes('window')
-          ? 'This test is not open right now.'
-          : 'Could not start this test. Please try again.',
-      )
-      return
+      if (r.error) {
+        setMsg(
+          r.error.message.toLowerCase().includes('window')
+            ? 'This test is not open right now.'
+            : r.error.message.toLowerCase().includes('expired')
+              ? 'Your test time has expired.'
+              : 'Could not start this test. Please try again.',
+        )
+        return
+      }
+
+      const [attemptResult, questionResult] = await Promise.all([
+        supabase
+          .from('test_attempts')
+          .select('started_at')
+          .eq('id', r.data)
+          .single(),
+
+        supabase
+          .from('test_questions')
+          .select(
+            'id,body,marks,position,question_type,test_options(id,body,position)',
+          )
+          .eq('test_id', test.id)
+          .order('position'),
+      ])
+
+      if (attemptResult.error || questionResult.error) {
+        setMsg('Could not load test questions. Please try again.')
+        return
+      }
+
+      const attemptEnds =
+        new Date(attemptResult.data.started_at).getTime() +
+        test.duration_minutes * 60000
+
+      const questions = (questionResult.data ?? []) as unknown as TestQuestion[]
+
+      setAns({})
+      setIdx(0)
+      setLeft(Math.max(0, Math.ceil((attemptEnds - Date.now()) / 1000)))
+
+      setAct({
+        attempt: r.data,
+        test,
+        ends: attemptEnds,
+        qs: questions,
+      })
+    } finally {
+      setStarting(false)
     }
-
-    const [a, q] = await Promise.all([
-      supabase
-        .from('test_attempts')
-        .select('started_at')
-        .eq('id', r.data)
-        .single(),
-      supabase
-        .from('test_questions')
-        .select('id,body,marks,position,test_options(id,body,position)')
-        .eq('test_id', t.id)
-        .order('position'),
-    ])
-
-    if (a.error || q.error) {
-      setMsg('Could not load test questions. Please try again.')
-      return
-    }
-
-    const attemptEnds =
-      new Date(a.data.started_at).getTime() + t.duration_minutes * 60000
-
-    setAns({})
-    setIdx(0)
-    setLeft(Math.max(0, Math.ceil((attemptEnds - Date.now()) / 1000)))
-
-    setAct({
-      attempt: r.data,
-      test: t,
-      ends: attemptEnds,
-      qs: q.data ?? [],
-    })
   }
 
   async function submit() {
     if (!act || submitting) return
 
     setSubmitting(true)
-    const attempt = act.attempt
+
+    const currentAttempt = act.attempt
 
     const r = await supabase.rpc('submit_test', {
-      p_attempt: attempt,
+      p_attempt: currentAttempt,
       p_answers: ans,
     })
 
-    setAct(null)
     setSubmitting(false)
 
+    if (r.error) {
+      setMsg(
+        'Submission was rejected. Your test may have expired or already been submitted. Please contact your teacher if you need help.',
+      )
+      return
+    }
+
+    setAct(null)
+    setAns({})
     setMsg(
-      r.error
-        ? 'Submission was rejected. The test may have expired or already been submitted.'
-        : '🎉 Test submitted successfully! Your teacher will release your results.',
+      '🎉 Test submitted successfully! Your teacher will release your results.',
     )
 
     await load()
@@ -137,23 +219,28 @@ export default function StudentTests() {
 
   const now = Date.now()
 
-  const getResult = (attempt: any) =>
-    attempt &&
-    (Array.isArray(attempt.test_results)
-      ? attempt.test_results[0]
-      : attempt.test_results)
+  const getResult = (attempt?: Attempt) => {
+    if (!attempt) return null
 
-  const isOpen = (test: any) =>
+    return Array.isArray(attempt.test_results)
+      ? attempt.test_results[0] ?? null
+      : attempt.test_results ?? null
+  }
+
+  const isOpen = (test: Test) =>
     new Date(test.available_from).getTime() <= now &&
     now <= new Date(test.available_until).getTime()
 
-  const getTestStatus = (test: any) => {
+  const getTestStatus = (test: Test) => {
     const attempt = atts[test.id]
 
     if (attempt?.submitted_at) return 'completed'
     if (attempt) return 'resume'
     if (isOpen(test)) return 'available'
-    if (now < new Date(test.available_from).getTime()) return 'upcoming'
+
+    if (now < new Date(test.available_from).getTime()) {
+      return 'upcoming'
+    }
 
     return 'closed'
   }
@@ -191,7 +278,9 @@ export default function StudentTests() {
 
   const filteredTests = tests.filter(test => {
     const status = getTestStatus(test)
+
     const matchesFilter = filter === 'all' || status === filter
+
     const matchesSearch =
       `${test.title} ${test.subjects?.name ?? ''}`
         .toLowerCase()
@@ -215,28 +304,44 @@ export default function StudentTests() {
   // Active test interface
   if (act) {
     const q = act.qs[idx]
+
+    const questionType: QuestionType = q?.question_type ?? 'mcq'
+
     const sortedOptions = q
       ? [...(q.test_options ?? [])].sort(
-          (a: any, b: any) => a.position - b.position,
+          (a, b) => a.position - b.position,
         )
       : []
 
-    const answeredCount = Object.keys(ans).length
+    const answeredCount = Object.keys(ans).filter(
+      id => ans[id]?.trim(),
+    ).length
+
     const progress = act.qs.length
       ? (answeredCount / act.qs.length) * 100
       : 0
 
+    const typeLabels: Record<QuestionType, string> = {
+      mcq: 'Multiple Choice',
+      true_false: 'True / False',
+      fill_blank: 'Fill in the Blank',
+      short_answer: 'Short Answer',
+    }
+
     return (
       <div className="space-y-6">
+        {/* Test header */}
         <section className="rounded-3xl bg-gradient-to-r from-violet-700 to-purple-500 p-5 text-white shadow-lg sm:p-7">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <span className="text-xs font-bold uppercase tracking-widest text-white/75">
                 ✨ FOCUS TIME
               </span>
+
               <h1 className="mt-2 text-2xl font-extrabold text-white sm:text-3xl">
                 {act.test.title}
               </h1>
+
               <p className="mt-2 text-sm text-white/80">
                 {act.test.subjects?.name ?? 'Online assessment'}
               </p>
@@ -249,6 +354,7 @@ export default function StudentTests() {
               aria-live="polite"
             >
               <p className="text-xs text-white/80">TIME LEFT</p>
+
               <p className="mt-1 font-mono text-2xl font-extrabold">
                 {Math.floor(left / 60)
                   .toString()
@@ -269,6 +375,7 @@ export default function StudentTests() {
             <span>
               {answeredCount} of {act.qs.length} answered
             </span>
+
             <span>
               Question {act.qs.length ? idx + 1 : 0} of {act.qs.length}
             </span>
@@ -278,78 +385,158 @@ export default function StudentTests() {
         {act.qs.length === 0 ? (
           <section className="rounded-2xl bg-white p-8 text-center shadow-sm">
             <div className="text-4xl">📭</div>
+
             <h2 className="mt-3 text-lg font-bold text-slate-800">
               No questions found
             </h2>
+
             <p className="mt-2 text-sm text-slate-500">
               This test currently has no questions.
             </p>
           </section>
         ) : (
           <>
+            {/* Question */}
             <section className="rounded-3xl border border-violet-100 bg-white p-5 shadow-sm sm:p-8">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <span className="rounded-full bg-violet-100 px-3 py-1.5 text-xs font-bold text-violet-700">
                   QUESTION {idx + 1}
                 </span>
+
                 <span className="rounded-full bg-amber-50 px-3 py-1.5 text-xs font-bold text-amber-700">
                   ⭐ {q.marks} marks
                 </span>
               </div>
 
-              <h2 className="mt-6 whitespace-pre-wrap break-words text-lg font-bold leading-8 text-slate-800 sm:text-xl">
+              <div className="mt-4">
+                <span className="inline-flex rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
+                  {typeLabels[questionType]}
+                </span>
+              </div>
+
+              <h2 className="mt-5 whitespace-pre-wrap break-words text-lg font-bold leading-8 text-slate-800 sm:text-xl">
                 {q.body}
               </h2>
 
-              <p className="mt-2 text-xs text-slate-400">
-                Choose one answer.
-              </p>
+              {/* MCQ and True/False */}
+              {(questionType === 'mcq' ||
+                questionType === 'true_false') && (
+                <>
+                  <p className="mt-2 text-xs text-slate-400">
+                    Choose one answer.
+                  </p>
 
-              <div className="mt-6 space-y-3">
-                {sortedOptions.map((option: any, optionIndex: number) => {
-                  const selected = ans[q.id] === option.id
+                  <div className="mt-6 space-y-3">
+                    {sortedOptions.map((option, optionIndex) => {
+                      const selected = ans[q.id] === option.id
 
-                  return (
-                    <label
-                      key={option.id}
-                      className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 transition ${
-                        selected
-                          ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-100'
-                          : 'border-slate-200 bg-white hover:border-violet-200 hover:bg-violet-50/50'
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name={q.id}
-                        checked={selected}
-                        onChange={() =>
-                          setAns(previous => ({
-                            ...previous,
-                            [q.id]: option.id,
-                          }))
-                        }
-                        className="mt-1 h-4 w-4 accent-violet-600"
-                      />
+                      return (
+                        <label
+                          key={option.id}
+                          className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 transition ${
+                            selected
+                              ? 'border-violet-400 bg-violet-50 ring-2 ring-violet-100'
+                              : 'border-slate-200 bg-white hover:border-violet-200 hover:bg-violet-50/50'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name={q.id}
+                            checked={selected}
+                            onChange={() =>
+                              setAns(previous => ({
+                                ...previous,
+                                [q.id]: option.id,
+                              }))
+                            }
+                            className="mt-1 h-4 w-4 accent-violet-600"
+                          />
 
-                      <span
-                        className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-xs font-bold ${
-                          selected
-                            ? 'bg-violet-600 text-white'
-                            : 'bg-slate-100 text-slate-600'
-                        }`}
-                      >
-                        {String.fromCharCode(65 + optionIndex)}
-                      </span>
+                          <span
+                            className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg text-xs font-bold ${
+                              selected
+                                ? 'bg-violet-600 text-white'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {String.fromCharCode(65 + optionIndex)}
+                          </span>
 
-                      <span className="flex-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">
-                        {option.body}
-                      </span>
-                    </label>
-                  )
-                })}
-              </div>
+                          <span className="flex-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">
+                            {option.body}
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+
+              {/* Fill in the blank */}
+              {questionType === 'fill_blank' && (
+                <div className="mt-6">
+                  <label
+                    htmlFor={`answer-${q.id}`}
+                    className="mb-2 block text-sm font-semibold text-slate-700"
+                  >
+                    Your answer
+                  </label>
+
+                  <input
+                    id={`answer-${q.id}`}
+                    type="text"
+                    maxLength={5000}
+                    value={ans[q.id] ?? ''}
+                    onChange={e =>
+                      setAns(previous => ({
+                        ...previous,
+                        [q.id]: e.target.value,
+                      }))
+                    }
+                    placeholder="Type your answer here..."
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none transition focus:border-violet-400 focus:bg-white focus:ring-4 focus:ring-violet-100"
+                  />
+
+                  <p className="mt-2 text-xs text-slate-400">
+                    Enter your answer clearly. Spelling should match the
+                    expected answer.
+                  </p>
+                </div>
+              )}
+
+              {/* Short answer */}
+              {questionType === 'short_answer' && (
+                <div className="mt-6">
+                  <label
+                    htmlFor={`answer-${q.id}`}
+                    className="mb-2 block text-sm font-semibold text-slate-700"
+                  >
+                    Write your answer
+                  </label>
+
+                  <textarea
+                    id={`answer-${q.id}`}
+                    rows={6}
+                    maxLength={5000}
+                    value={ans[q.id] ?? ''}
+                    onChange={e =>
+                      setAns(previous => ({
+                        ...previous,
+                        [q.id]: e.target.value,
+                      }))
+                    }
+                    placeholder="Write your answer in detail..."
+                    className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 outline-none transition focus:border-violet-400 focus:bg-white focus:ring-4 focus:ring-violet-100"
+                  />
+
+                  <p className="mt-2 text-xs text-slate-400">
+                    Your teacher will evaluate this answer manually.
+                  </p>
+                </div>
+              )}
             </section>
 
+            {/* Navigation */}
             <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
               <button
                 type="button"
@@ -394,6 +581,12 @@ export default function StudentTests() {
             </section>
           </>
         )}
+
+        {submitting && (
+          <p className="text-center text-sm font-medium text-violet-600">
+            Submitting your answers. Please wait...
+          </p>
+        )}
       </div>
     )
   }
@@ -420,55 +613,78 @@ export default function StudentTests() {
         <div className="pointer-events-none absolute -right-2 -top-5 text-8xl opacity-20 sm:right-12 sm:top-1 sm:text-9xl">
           🧠
         </div>
+
         <div className="pointer-events-none absolute bottom-4 right-24 text-4xl opacity-30">
           ⭐
         </div>
       </section>
 
+      {/* Summary cards */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-emerald-800">Ready to take</p>
+              <p className="text-sm font-medium text-emerald-800">
+                Ready to take
+              </p>
+
               <p className="mt-2 text-3xl font-extrabold text-emerald-950">
                 {availableCount}
               </p>
             </div>
+
             <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white text-2xl shadow-sm">
               🚀
             </span>
           </div>
-          <p className="mt-3 text-xs text-emerald-700">Available tests and attempts</p>
+
+          <p className="mt-3 text-xs text-emerald-700">
+            Available tests and attempts
+          </p>
         </div>
 
         <div className="rounded-2xl border border-violet-100 bg-violet-50 p-5">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-violet-800">Completed</p>
+              <p className="text-sm font-medium text-violet-800">
+                Completed
+              </p>
+
               <p className="mt-2 text-3xl font-extrabold text-violet-950">
                 {completedCount}
               </p>
             </div>
+
             <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white text-2xl shadow-sm">
               🏆
             </span>
           </div>
-          <p className="mt-3 text-xs text-violet-700">Tests you have submitted</p>
+
+          <p className="mt-3 text-xs text-violet-700">
+            Tests you have submitted
+          </p>
         </div>
 
         <div className="rounded-2xl border border-sky-100 bg-sky-50 p-5">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium text-sky-800">Coming soon</p>
+              <p className="text-sm font-medium text-sky-800">
+                Coming soon
+              </p>
+
               <p className="mt-2 text-3xl font-extrabold text-sky-950">
                 {upcomingCount}
               </p>
             </div>
+
             <span className="grid h-12 w-12 place-items-center rounded-2xl bg-white text-2xl shadow-sm">
               📅
             </span>
           </div>
-          <p className="mt-3 text-xs text-sky-700">Tests opening in the future</p>
+
+          <p className="mt-3 text-xs text-sky-700">
+            Tests opening in the future
+          </p>
         </div>
       </section>
 
@@ -481,15 +697,18 @@ export default function StudentTests() {
         </div>
       )}
 
+      {/* Test list */}
       <section>
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <p className="text-xs font-bold uppercase tracking-widest text-blue-500">
               PRACTICE & PROGRESS
             </p>
+
             <h2 className="mt-1 text-2xl font-extrabold text-slate-800">
               Your tests
             </h2>
+
             <p className="mt-1 text-sm text-slate-500">
               Check availability, continue an attempt, or view your results.
             </p>
@@ -524,19 +743,24 @@ export default function StudentTests() {
         {loading ? (
           <div className="rounded-2xl border border-slate-100 bg-white p-10 text-center">
             <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-4 border-blue-100 border-t-blue-600" />
-            <p className="text-sm text-slate-500">Loading your tests...</p>
+            <p className="text-sm text-slate-500">
+              Loading your tests...
+            </p>
           </div>
         ) : filteredTests.length === 0 ? (
           <div className="rounded-3xl border-2 border-dashed border-blue-200 bg-white p-10 text-center">
             <div className="text-5xl">🧠</div>
+
             <h3 className="mt-4 text-lg font-bold text-slate-800">
               {tests.length === 0 ? 'No tests just yet!' : 'No matching tests'}
             </h3>
+
             <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-500">
               {tests.length === 0
                 ? 'When your teacher publishes an online test, it will appear here.'
                 : 'Try changing your search or selecting another filter.'}
             </p>
+
             {(search || filter !== 'all') && (
               <button
                 type="button"
@@ -557,6 +781,7 @@ export default function StudentTests() {
               const result = getResult(attempt)
               const status = getTestStatus(test)
               const details = statusDetails[status]
+
               const accent = [
                 'from-violet-500 to-fuchsia-400',
                 'from-sky-500 to-blue-400',
@@ -581,6 +806,7 @@ export default function StudentTests() {
                         <span className="text-xs font-bold uppercase tracking-wide text-blue-600">
                           {test.subjects?.name ?? 'General assessment'}
                         </span>
+
                         <h3 className="mt-1 break-words text-lg font-bold text-slate-800">
                           {test.title}
                         </h3>
@@ -595,20 +821,27 @@ export default function StudentTests() {
 
                     <div className="grid grid-cols-2 gap-3">
                       <div className="rounded-xl bg-slate-50 p-3">
-                        <p className="text-xs text-slate-500">⏱️ Duration</p>
+                        <p className="text-xs text-slate-500">
+                          ⏱️ Duration
+                        </p>
+
                         <p className="mt-1 text-sm font-bold text-slate-800">
                           {test.duration_minutes} minutes
                         </p>
                       </div>
 
                       <div className="rounded-xl bg-sky-50 p-3">
-                        <p className="text-xs text-sky-700">🗓️ Opens</p>
+                        <p className="text-xs text-sky-700">
+                          🗓️ Opens
+                        </p>
+
                         <p className="mt-1 text-sm font-bold text-slate-800">
                           {new Date(test.available_from).toLocaleDateString(
                             undefined,
                             { day: 'numeric', month: 'short' },
                           )}
                         </p>
+
                         <p className="mt-1 text-xs text-slate-500">
                           {new Date(test.available_from).toLocaleTimeString(
                             undefined,
@@ -625,34 +858,46 @@ export default function StudentTests() {
                       {new Date(test.available_until).toLocaleString()}
                     </div>
 
-                    {attempt?.submitted_at ? (
+                    {attempt?.submitted_at && (
                       <div className="rounded-xl border border-violet-100 bg-violet-50 p-4">
                         {result ? (
                           <>
                             <p className="text-xs font-bold uppercase tracking-wide text-violet-700">
                               🏆 Your result
                             </p>
+
                             <p className="mt-1 text-2xl font-extrabold text-violet-900">
                               {result.score} / {result.max_score}
                             </p>
+
+                            {result.grading_complete === false && (
+                              <p className="mt-2 text-xs text-violet-700">
+                                Some answers are still being evaluated by
+                                your teacher.
+                              </p>
+                            )}
                           </>
                         ) : (
                           <p className="text-sm font-medium text-violet-800">
-                            📬 Submitted successfully. Your results are pending.
+                            📬 Submitted successfully. Your results are
+                            pending.
                           </p>
                         )}
                       </div>
-                    ) : null}
+                    )}
 
                     {['available', 'resume'].includes(status) ? (
                       <button
                         type="button"
+                        disabled={starting}
                         onClick={() => void start(test)}
-                        className="w-full rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:from-blue-700 hover:to-violet-700"
+                        className="w-full rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 px-5 py-3 text-sm font-bold text-white shadow-sm transition hover:from-blue-700 hover:to-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {status === 'resume'
-                          ? 'Continue test →'
-                          : 'Start test 🚀'}
+                        {starting
+                          ? 'Loading test...'
+                          : status === 'resume'
+                            ? 'Continue test →'
+                            : 'Start test 🚀'}
                       </button>
                     ) : status === 'upcoming' ? (
                       <div className="rounded-xl bg-sky-50 p-3 text-center text-sm font-medium text-sky-700">

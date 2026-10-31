@@ -7,7 +7,10 @@ type Material = {
   title: string
   description: string | null
   storage_path: string
+  category: string | null
+  chapter: string | null
   subjects: { name: string } | null
+  classes: { name: string; board: string | null } | null
 }
 
 const subjectColors = [
@@ -17,6 +20,8 @@ const subjectColors = [
   'material-orange',
   'material-pink',
 ]
+
+const ALL_CATEGORIES = 'All categories'
 
 function fileInfo(path: string) {
   const filename = path.split('/').pop() ?? ''
@@ -36,13 +41,13 @@ function fileInfo(path: string) {
   return { icon: '📄', label: 'STUDY RESOURCE' }
 }
 
-
 export default function StudentMaterials() {
   const [list, setList] = useState<Material[]>([])
   const [msg, setMsg] = useState('')
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [subjectFilter, setSubjectFilter] = useState('All subjects')
+  const [categoryFilter, setCategoryFilter] = useState(ALL_CATEGORIES)
   const [openingId, setOpeningId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -53,7 +58,17 @@ export default function StudentMaterials() {
 
       const { data, error } = await supabase
         .from('learning_materials')
-        .select('id,title,description,storage_path,subjects(name)')
+        .select(`
+          id,
+          title,
+          description,
+          storage_path,
+          category,
+          chapter,
+          subjects(name),
+          classes(name,board)
+        `)
+        .eq('published', true)
         .order('created_at', { ascending: false })
 
       if (!active) return
@@ -78,7 +93,21 @@ export default function StudentMaterials() {
     () => [
       'All subjects',
       ...Array.from(
-        new Set(list.map((item) => item.subjects?.name).filter(Boolean) as string[]),
+        new Set(
+          list.map(item => item.subjects?.name).filter(Boolean) as string[]
+        )
+      ).sort(),
+    ],
+    [list],
+  )
+
+  const categories = useMemo(
+    () => [
+      ALL_CATEGORIES,
+      ...Array.from(
+        new Set(
+          list.map(item => item.category).filter(Boolean) as string[]
+        )
       ).sort(),
     ],
     [list],
@@ -87,20 +116,26 @@ export default function StudentMaterials() {
   const filteredMaterials = useMemo(() => {
     const query = search.trim().toLowerCase()
 
-    return list.filter((item) => {
+    return list.filter(item => {
       const matchesSearch =
         !query ||
         item.title.toLowerCase().includes(query) ||
         (item.description ?? '').toLowerCase().includes(query) ||
-        (item.subjects?.name ?? '').toLowerCase().includes(query)
+        (item.subjects?.name ?? '').toLowerCase().includes(query) ||
+        (item.chapter ?? '').toLowerCase().includes(query) ||
+        (item.category ?? '').toLowerCase().includes(query)
 
       const matchesSubject =
         subjectFilter === 'All subjects' ||
         item.subjects?.name === subjectFilter
 
-      return matchesSearch && matchesSubject
+      const matchesCategory =
+        categoryFilter === ALL_CATEGORIES ||
+        item.category === categoryFilter
+
+      return matchesSearch && matchesSubject && matchesCategory
     })
-  }, [list, search, subjectFilter])
+  }, [list, search, subjectFilter, categoryFilter])
 
   async function handleOpen(material: Material) {
     setMsg('')
@@ -119,6 +154,17 @@ export default function StudentMaterials() {
     }
   }
 
+  const hasFilters =
+    search !== '' ||
+    subjectFilter !== 'All subjects' ||
+    categoryFilter !== ALL_CATEGORIES
+
+  function resetFilters() {
+    setSearch('')
+    setSubjectFilter('All subjects')
+    setCategoryFilter(ALL_CATEGORIES)
+  }
+
   return (
     <div className="materials-page">
       <section className="materials-hero">
@@ -129,6 +175,13 @@ export default function StudentMaterials() {
             Every little step counts! Find your notes, explore your subjects,
             and keep learning at your own pace.
           </p>
+
+          {list.length > 0 && list[0].classes && (
+            <p className="mt-2">
+              {list[0].classes.board ?? 'Board not assigned'} ·{' '}
+              {list[0].classes.name}
+            </p>
+          )}
 
           <div className="materials-hero-stats">
             <div>
@@ -157,7 +210,8 @@ export default function StudentMaterials() {
             <h2>Your learning library</h2>
           </div>
           <span className="materials-count">
-            {filteredMaterials.length} {filteredMaterials.length === 1 ? 'resource' : 'resources'}
+            {filteredMaterials.length}{' '}
+            {filteredMaterials.length === 1 ? 'resource' : 'resources'}
           </span>
         </div>
 
@@ -168,20 +222,33 @@ export default function StudentMaterials() {
               type="search"
               placeholder="Search notes, topics, subjects..."
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={event => setSearch(event.target.value)}
               aria-label="Search study materials"
             />
           </label>
 
           <select
             value={subjectFilter}
-            onChange={(event) => setSubjectFilter(event.target.value)}
+            onChange={event => setSubjectFilter(event.target.value)}
             aria-label="Filter by subject"
             className="materials-subject-filter"
           >
-            {subjects.map((subject) => (
+            {subjects.map(subject => (
               <option key={subject} value={subject}>
                 {subject}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={categoryFilter}
+            onChange={event => setCategoryFilter(event.target.value)}
+            aria-label="Filter by category"
+            className="materials-subject-filter"
+          >
+            {categories.map(category => (
+              <option key={category} value={category}>
+                {category}
               </option>
             ))}
           </select>
@@ -207,26 +274,21 @@ export default function StudentMaterials() {
       ) : filteredMaterials.length === 0 ? (
         <div className="materials-empty">
           <span className="materials-empty-icon">
-            {search || subjectFilter !== 'All subjects' ? '🔎' : '🎒'}
+            {hasFilters ? '🔎' : '🎒'}
           </span>
           <h3>
-            {search || subjectFilter !== 'All subjects'
-              ? 'No matching materials'
-              : 'Your library is waiting!'}
+            {hasFilters ? 'No matching materials' : 'Your library is waiting!'}
           </h3>
           <p>
-            {search || subjectFilter !== 'All subjects'
-              ? 'Try another search or choose a different subject.'
+            {hasFilters
+              ? 'Try another search or choose different filters.'
               : 'Your teacher’s shared notes and resources will appear here.'}
           </p>
 
-          {(search || subjectFilter !== 'All subjects') && (
+          {hasFilters && (
             <button
               className="materials-reset-button"
-              onClick={() => {
-                setSearch('')
-                setSubjectFilter('All subjects')
-              }}
+              onClick={resetFilters}
             >
               Show all materials
             </button>
@@ -257,8 +319,26 @@ export default function StudentMaterials() {
                   <h3>{material.title}</h3>
 
                   <p className="material-description">
-                    {material.description || 'A learning resource to help you revise and practise.'}
+                    {material.description ||
+                      'A learning resource to help you revise and practise.'}
                   </p>
+
+                  <div className="mt-3 text-sm space-y-1">
+                    {material.classes && (
+                      <p>
+                        {material.classes.board ?? 'Board not assigned'} ·{' '}
+                        {material.classes.name}
+                      </p>
+                    )}
+
+                    {material.category && (
+                      <p>📁 {material.category}</p>
+                    )}
+
+                    {material.chapter && (
+                      <p>📖 {material.chapter}</p>
+                    )}
+                  </div>
                 </div>
 
                 <div className="material-card-bottom">
@@ -271,7 +351,9 @@ export default function StudentMaterials() {
                     onClick={() => handleOpen(material)}
                     disabled={openingId === material.id}
                   >
-                    {openingId === material.id ? 'Opening...' : 'Open material ↗'}
+                    {openingId === material.id
+                      ? 'Opening...'
+                      : 'Open material ↗'}
                   </button>
                 </div>
               </article>
